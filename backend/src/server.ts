@@ -27,6 +27,12 @@ app.get("/api/health", (req, res) => {
 // Quotation routes
 app.use("/api/quotations", quotationRoutes);
 
+// Direct top-level endpoint matching Phase 2 specification
+app.post("/api/generate-pdf", (req, res, next) => {
+  req.url = "/generate-pdf";
+  quotationRoutes(req, res, next);
+});
+
 // Global error handler
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error("Unhandled server error:", err);

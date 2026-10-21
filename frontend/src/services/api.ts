@@ -1,6 +1,42 @@
-import { Quotation, QuotationFormData } from "../types/quotation";
+import { Quotation, QuotationFormData, TemplateInfo } from "../types/quotation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
+
+export async function fetchTemplates(): Promise<TemplateInfo[]> {
+  try {
+    const res = await fetch(`${API_BASE}/quotations/templates`, { cache: "no-store" });
+    if (!res.ok) {
+      return [];
+    }
+    const data = await res.json();
+    return data.templates || [];
+  } catch (err) {
+    console.warn("Failed to fetch template list from backend, using default fallback:", err);
+    return [
+      {
+        id: "t2",
+        name: "Surya Sangam Official Canva Design (t2)",
+        description: "Official Surya Sangam minimalist design with dark accent divider bars",
+        fileName: "t2.pdf",
+        isDefault: true,
+      },
+      {
+        id: "t3",
+        name: "Solar Technical & Pricing Specification (t3)",
+        description: "Detailed solar quotation with bank account and warranty layout",
+        fileName: "t3.pdf",
+        isDefault: false,
+      },
+      {
+        id: "t2-html",
+        name: "Surya Sangam HTML Engine (Canva Fidelity)",
+        description: "Puppeteer-based pixel-faithful rendering for custom printing",
+        fileName: "html",
+        isDefault: false,
+      },
+    ];
+  }
+}
 
 export async function fetchQuotations(): Promise<Quotation[]> {
   const res = await fetch(`${API_BASE}/quotations`, { cache: "no-store" });
@@ -79,8 +115,13 @@ export async function deleteQuotation(id: string): Promise<void> {
   }
 }
 
-export async function downloadQuotationPdf(idOrQuotationId: string, downloadName?: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/quotations/${idOrQuotationId}/pdf`);
+export async function downloadQuotationPdf(
+  idOrQuotationId: string,
+  downloadName?: string,
+  templateId?: string
+): Promise<void> {
+  const queryParam = templateId ? `?templateId=${encodeURIComponent(templateId)}` : "";
+  const res = await fetch(`${API_BASE}/quotations/${idOrQuotationId}/pdf${queryParam}`);
   if (!res.ok) {
     throw new Error("Failed to generate PDF for download");
   }
@@ -95,11 +136,19 @@ export async function downloadQuotationPdf(idOrQuotationId: string, downloadName
   document.body.removeChild(a);
 }
 
-export async function previewQuotationPdf(formData: QuotationFormData): Promise<string> {
+export async function previewQuotationPdf(
+  formData: QuotationFormData,
+  templateId?: string
+): Promise<string> {
+  const payload = {
+    ...formData,
+    templateId: templateId || formData.templateId || "t2",
+  };
+
   const res = await fetch(`${API_BASE}/quotations/preview-pdf`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(formData),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
@@ -115,6 +164,7 @@ export interface EmailPayload {
   recipientEmail?: string;
   subject?: string;
   message?: string;
+  templateId?: string;
 }
 
 export interface EmailResponse {
@@ -154,6 +204,7 @@ export async function sendFormQuotationEmail(
       recipientEmail: payload.recipientEmail,
       subject: payload.subject,
       message: payload.message,
+      templateId: payload.templateId || formData.templateId,
     }),
   });
 

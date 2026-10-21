@@ -7,6 +7,7 @@ export interface SendEmailOptions {
   recipientEmail?: string;
   subject?: string;
   message?: string;
+  templateId?: string;
 }
 
 export interface SendEmailResult {
@@ -79,8 +80,8 @@ export async function sendQuotationEmail(options: SendEmailOptions): Promise<Sen
 
   const transporter = await getTransporter();
 
-  // Generate PDF buffer
-  const pdfBuffer = await generateQuotationPdf(quotation);
+  // Generate PDF buffer using selected template
+  const pdfBuffer = await generateQuotationPdf(quotation, options.templateId);
 
   const senderUser = process.env.SMTP_USER || "devb4111@gmail.com";
   const fromAddress = process.env.SMTP_FROM || `"Surya Sangam" <${senderUser}>`;

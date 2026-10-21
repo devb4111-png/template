@@ -15,6 +15,7 @@
     "mongodb-memory-server": "^10.1.4",
     "mongoose": "^8.9.5",
     "nodemailer": "^10.1.7",
+    "pdf-lib": "^1.17.1",
     "puppeteer-core": "^24.1.0",
     "zod": "^3.24.1"
   },

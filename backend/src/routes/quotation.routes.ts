@@ -4,6 +4,7 @@ import { calculateQuotation } from "../services/calculation.service";
 import { Quotation } from "../models/Quotation";
 import { generateQuotationPdf } from "../services/pdf.service";
 import { sendQuotationEmail } from "../services/email.service";
+import { getApprovedTemplatesList, isValidTemplateId } from "../config/pdfMap.config";
 
 const router = Router();
 
@@ -61,6 +62,13 @@ router.get("/", async (req: Request, res: Response) => {
     console.error("Error fetching quotations:", err);
     return res.status(500).json({ error: "Failed to fetch quotations", message: err.message });
   }
+});
+
+// GET /api/quotations/templates - List approved PDF templates (must be declared before /:id)
+router.get("/templates", (req: Request, res: Response) => {
+  return res.json({
+    templates: getApprovedTemplatesList(),
+  });
 });
 
 // GET /api/quotations/:id - Get quotation by ID or quotationId
@@ -144,10 +152,69 @@ router.delete("/:id", async (req: Request, res: Response) => {
   }
 });
 
+// POST /api/quotations/generate-pdf - Generate downloadable PDF per Phase 2 specification
+router.post("/generate-pdf", async (req: Request, res: Response) => {
+  try {
+    const rawTemplateId =
+      req.body.templateId ||
+      req.body.quotation?.templateId ||
+      (req.query.templateId as string);
+    const templateId = rawTemplateId || "t2";
+
+    if (rawTemplateId && !isValidTemplateId(rawTemplateId)) {
+      return res.status(400).json({
+        error: `Invalid templateId: "${rawTemplateId}".`,
+        availableTemplates: getApprovedTemplatesList().map((t) => t.id),
+      });
+    }
+
+    // Support both { templateId, quotation: { ... } } and direct { templateId, ...quotation }
+    const quotationPayload = req.body.quotation ? req.body.quotation : req.body;
+    const parseResult = QuotationInputSchema.safeParse(quotationPayload);
+    if (!parseResult.success) {
+      return res.status(400).json({
+        error: "Validation failed for quotation data",
+        details: parseResult.error.flatten().fieldErrors,
+      });
+    }
+
+    const calculated = calculateQuotation({
+      ...parseResult.data,
+      templateId,
+    });
+    const pdfBuffer = await generateQuotationPdf(calculated, templateId);
+
+    const safeQuotationId = calculated.quotationId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="Quotation-${safeQuotationId}.pdf"`,
+      "Content-Length": pdfBuffer.length.toString(),
+    });
+
+    return res.send(pdfBuffer);
+  } catch (err: any) {
+    console.error("Error generating quotation PDF:", err);
+    return res.status(500).json({ error: "Failed to generate PDF", message: err.message });
+  }
+});
+
 // POST /api/quotations/preview-pdf - Generate PDF from submitted data directly
 router.post("/preview-pdf", async (req: Request, res: Response) => {
   try {
-    const parseResult = QuotationInputSchema.safeParse(req.body);
+    const rawTemplateId =
+      req.body.templateId ||
+      req.body.quotation?.templateId ||
+      (req.query.templateId as string);
+    const templateId = rawTemplateId || "t2";
+    if (rawTemplateId && !isValidTemplateId(rawTemplateId)) {
+      return res.status(400).json({
+        error: `Invalid templateId: "${rawTemplateId}".`,
+        availableTemplates: getApprovedTemplatesList().map((t) => t.id),
+      });
+    }
+
+    const quotationPayload = req.body.quotation ? req.body.quotation : req.body;
+    const parseResult = QuotationInputSchema.safeParse(quotationPayload);
     if (!parseResult.success) {
       return res.status(400).json({
         error: "Validation failed",
@@ -155,8 +222,11 @@ router.post("/preview-pdf", async (req: Request, res: Response) => {
       });
     }
 
-    const calculated = calculateQuotation(parseResult.data);
-    const pdfBuffer = await generateQuotationPdf(calculated);
+    const calculated = calculateQuotation({
+      ...parseResult.data,
+      templateId,
+    });
+    const pdfBuffer = await generateQuotationPdf(calculated, templateId);
 
     res.set({
       "Content-Type": "application/pdf",
@@ -187,12 +257,25 @@ router.get("/:id/pdf", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Quotation not found" });
     }
 
+    const templateId = (req.query.templateId as string) || quotation.templateId || "t2";
+
+    if (templateId && !isValidTemplateId(templateId)) {
+      return res.status(400).json({
+        error: `Invalid templateId: "${templateId}".`,
+        availableTemplates: getApprovedTemplatesList().map((t) => t.id),
+      });
+    }
+
     const calculated = calculateQuotation({
+      templateId,
       quotationId: quotation.quotationId,
       quotationDate: quotation.quotationDate,
       clientName: quotation.clientName,
       clientAddress: quotation.clientAddress,
       clientEmail: quotation.clientEmail,
+      clientPhone: quotation.clientPhone,
+      contactPerson: quotation.contactPerson,
+      companyDetails: quotation.companyDetails,
       items: quotation.items.map((it) => ({
         itemName: it.itemName,
         quantity: it.quantity,
@@ -202,11 +285,12 @@ router.get("/:id/pdf", async (req: Request, res: Response) => {
       terms: quotation.terms,
     });
 
-    const pdfBuffer = await generateQuotationPdf(calculated);
+    const pdfBuffer = await generateQuotationPdf(calculated, templateId);
 
+    const safeQuotationId = quotation.quotationId.replace(/[^a-zA-Z0-9_-]/g, "_");
     res.set({
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="Quotation-${quotation.quotationId}.pdf"`,
+      "Content-Disposition": `attachment; filename="Quotation-${safeQuotationId}.pdf"`,
       "Content-Length": pdfBuffer.length.toString(),
     });
 
@@ -221,7 +305,7 @@ router.get("/:id/pdf", async (req: Request, res: Response) => {
 router.post("/:id/send-email", async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    const { recipientEmail, subject, message } = req.body;
+    const { recipientEmail, subject, message, templateId } = req.body;
 
     let quotation = null;
     if (id && id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -236,11 +320,15 @@ router.post("/:id/send-email", async (req: Request, res: Response) => {
     }
 
     const calculated = calculateQuotation({
+      templateId: quotation.templateId || "t2",
       quotationId: quotation.quotationId,
       quotationDate: quotation.quotationDate,
       clientName: quotation.clientName,
       clientAddress: quotation.clientAddress,
       clientEmail: quotation.clientEmail,
+      clientPhone: quotation.clientPhone,
+      contactPerson: quotation.contactPerson,
+      companyDetails: quotation.companyDetails,
       items: quotation.items.map((it) => ({
         itemName: it.itemName,
         quantity: it.quantity,
@@ -255,6 +343,7 @@ router.post("/:id/send-email", async (req: Request, res: Response) => {
       recipientEmail,
       subject,
       message,
+      templateId,
     });
 
     return res.json({
@@ -272,7 +361,7 @@ router.post("/:id/send-email", async (req: Request, res: Response) => {
 // POST /api/quotations/send-email - Send quotation directly from form data without saving
 router.post("/send-email", async (req: Request, res: Response) => {
   try {
-    const { quotationData, recipientEmail, subject, message } = req.body;
+    const { quotationData, recipientEmail, subject, message, templateId } = req.body;
     const parseResult = QuotationInputSchema.safeParse(quotationData || req.body);
     if (!parseResult.success) {
       return res.status(400).json({
@@ -282,11 +371,14 @@ router.post("/send-email", async (req: Request, res: Response) => {
     }
 
     const calculated = calculateQuotation(parseResult.data);
+    const chosenTemplate = templateId || quotationData?.templateId;
+
     const result = await sendQuotationEmail({
       quotation: calculated,
       recipientEmail,
       subject,
       message,
+      templateId: chosenTemplate,
     });
 
     return res.json({

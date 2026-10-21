@@ -49,10 +49,10 @@ export default function SavedQuotationsList({
     }
   };
 
-  const handleDownload = async (id: string, qId: string) => {
+  const handleDownload = async (id: string, qId: string, templateId?: string) => {
     setDownloadingId(id);
     try {
-      await downloadQuotationPdf(id, `Quotation-${qId}.pdf`);
+      await downloadQuotationPdf(id, `Quotation-${qId}.pdf`, templateId);
     } catch (err: any) {
       alert(err.message || "Failed to download PDF");
     } finally {
@@ -118,6 +118,11 @@ export default function SavedQuotationsList({
                     <span className="text-xs font-bold text-slate-800 tracking-wide font-mono bg-slate-100 px-2 py-0.5 rounded">
                       {item.quotationId}
                     </span>
+                    {item.templateId && (
+                      <span className="ml-1.5 text-[10px] uppercase font-bold text-emerald-800 bg-emerald-100/80 px-1.5 py-0.5 rounded">
+                        {item.templateId}
+                      </span>
+                    )}
                     <h4 className="text-sm font-semibold text-slate-800 mt-1 line-clamp-1">
                       {item.clientName}
                     </h4>
@@ -152,7 +157,7 @@ export default function SavedQuotationsList({
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDownload(item._id, item.quotationId)}
+                      onClick={() => handleDownload(item._id, item.quotationId, item.templateId)}
                       disabled={downloadingId === item._id}
                       title="Download PDF"
                       className="p-1 text-slate-600 hover:text-slate-900 hover:bg-white border border-transparent hover:border-slate-200 rounded transition"
